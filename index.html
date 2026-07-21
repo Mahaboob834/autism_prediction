@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Autism Screening Quiz</title>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="header">
+      <h1>Autism Spectrum Screening</h1>
+      <p>A quick preliminary screening tool — not a medical diagnosis</p>
+    </div>
+    <div class="progress-bg">
+      <div class="progress-fill" id="prog"></div>
+    </div>
+    <div id="app"></div>
+  </div>
+
+  <script>
+    // Relative path works because Flask now serves this file itself.
+    const API_URL = "https://autism-prediction-iewr9ni0j-mahabo.vercel.app";
+
+    const questions = [
+      "Does the person make eye contact?",
+      "Do they point to indicate interest?",
+      "Do they respond to their name?",
+      "Do they share interests with others?",
+      "Do they play 'make-believe'?",
+      "Do they follow where you look?",
+      "Do they comfort others who are sad?",
+      "Were their first words delayed?",
+      "Do they use simple gestures?",
+      "Do they stare at nothing for long periods?"
+    ];
+
+    const TOTAL = 14;
+    const state = { step: 0, answers: Array(10).fill(null), age: '', gender: null, jaundice: null, familyASD: null };
+    const app = document.getElementById('app');
+    const prog = document.getElementById('prog');
+
+    function setProgress(n) { prog.style.width = Math.round((n / TOTAL) * 100) + '%'; }
+
+    function go(n) { state.step = Math.max(0, n); render(); }
+
+    function render() {
+      setProgress(state.step);
+      app.innerHTML = '';
+      const el = document.createElement('div');
+      el.className = 'slide-in';
+
+      if (state.step < 10) el.innerHTML = buildQuestion(state.step);
+      else if (state.step === 10) el.innerHTML = buildAge();
+      else if (state.step === 11) el.innerHTML = buildToggle(11, 'What is your gender?', ['Male', 'Female'], [1, 0], 'gender');
+      else if (state.step === 12) el.innerHTML = buildToggle(12, 'Were you born with jaundice?', ['Yes', 'No'], [1, 0], 'jaundice');
+      else if (state.step === 13) el.innerHTML = buildToggle(13, 'Family history of ASD?', ['Yes', 'No'], [1, 0], 'familyASD');
+      else if (state.step === 14) el.innerHTML = buildLoading();
+      else el.innerHTML = buildResult(state.result);
+
+      app.appendChild(el);
+
+      if (state.step === 14) {
+        fetchPrediction();
+      }
+      if (state.step === 15) {
+        setTimeout(() => { const b = document.getElementById('bar'); if (b) b.style.width = b.dataset.pct + '%'; }, 100);
+      }
+    }
+
+    function buildQuestion(i) {
+      const prev = i > 0 ? `<button class="back-btn" onclick="go(${i - 1})">← Back</button>` : '';
+      return `
+    <p class="step-label">Question ${i + 1} of 10</p>
+    <div class="card">
+      <p class="question-text">${questions[i]}</p>
+      <div class="btn-row">
+        <button class="choice-btn" onclick="pickQ(${i},1,this,'flash-yes')">Yes</button>
+        <button class="choice-btn" onclick="pickQ(${i},0,this,'flash-no')">No</button>
+      </div>
+    </div>
+    ${prev}`;
+    }
+
+    function pickQ(i, val, btn, cls) {
+      state.answers[i] = val;
+      btn.parentElement.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('flash-yes', 'flash-no'));
+      btn.classList.add(cls);
+      setTimeout(() => go(i + 1), 280);
+    }
+
+    function buildAge() {
+      return `
+    <p class="step-label">About you — 1 of 4</p>
+    <div class="card">
+      <p class="question-text">How old are you?</p>
+      <p class="info-label">Enter your age in years</p>
+      <input class="info-input" type="number" min="1" max="120" placeholder="e.g. 28" id="age-inp" value="${state.age}"
+        oninput="state.age=this.value; document.getElementById('age-go').disabled=!this.value" />
+      <button class="continue-btn" id="age-go" ${!state.age ? 'disabled' : ''} onclick="go(11)">Continue</button>
+    </div>
+    <button class="back-btn" onclick="go(9)">← Back</button>`;
+    }
+
+    function buildToggle(step, question, labels, vals, key) {
+      const cur = state[key];
+      const btns = labels.map((l, i) =>
+        `<button class="toggle-btn ${cur === vals[i] ? 'active' : ''}" onclick="pickToggle('${key}',${vals[i]},${step + 1})">${l}</button>`
+      ).join('');
+      const stepNum = step - 9;
+      const prevStep = step - 1;
+      return `
+    <p class="step-label">About you — ${stepNum} of 4</p>
+    <div class="card">
+      <p class="question-text">${question}</p>
+      <div class="toggle-row">${btns}</div>
+    </div>
+    <button class="back-btn" onclick="go(${prevStep})">← Back</button>`;
+    }
+
+    function pickToggle(key, val, next) {
+      state[key] = val;
+      setTimeout(() => go(next), 220);
+    }
+
+    function buildLoading() {
+      return `
+    <div class="card">
+      <p class="question-text">Scoring your answers…</p>
+    </div>`;
+    }
+
+    function buildError(msg) {
+      return `
+    <div class="card">
+      <p class="question-text">Something went wrong</p>
+      <p class="info-label">${msg}</p>
+      <button class="continue-btn" onclick="go(13)">← Back</button>
+    </div>`;
+    }
+
+    // Calls the Flask backend (app.py) instead of scoring locally.
+    async function fetchPrediction() {
+      const payload = {
+        answers: state.answers,
+        age: parseFloat(state.age),
+        gender: state.gender,
+        jaundice: state.jaundice,
+        familyASD: state.familyASD
+      };
+
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error || `Server responded with ${res.status}`);
+        }
+
+        const result = await res.json();
+        state.result = result;
+        go(15);
+      } catch (err) {
+        // Show the error in place, keep user on the loading step's slot
+        app.innerHTML = buildError(
+          err.message.includes('Failed to fetch')
+            ? 'Could not reach the prediction server. Is app.py running on localhost:5000?'
+            : err.message
+        );
+      }
+    }
+
+    function buildResult(result) {
+      if (!result) return buildError('No result returned from server.');
+      const { prediction, probability, risk } = result;
+      const pct = Math.round(probability * 100);
+      const riskClass = 'risk-' + risk.toLowerCase();
+      const barColor = risk === 'High' ? '#E24B4A' : risk === 'Medium' ? '#EF9F27' : '#639922';
+      const icon = prediction === 1 ? '🔍' : '✓';
+      const title = prediction === 1 ? 'Some ASD traits detected' : 'No significant ASD traits detected';
+      return `
+    <div class="result-card">
+      <div class="result-icon">${icon}</div>
+      <p class="result-title">${title}</p>
+      <p class="result-conf">Screening confidence: ${pct}%</p>
+      <div class="score-bar-bg"><div class="score-bar-fill" id="bar" data-pct="${pct}" style="width:0%;background:${barColor}"></div></div>
+      <div class="score-ends"><span>Low risk</span><span>High risk</span></div>
+      <span class="risk-badge ${riskClass}">Risk level: ${risk}</span>
+      <p class="disclaimer">This tool is for informational purposes only and is not a medical diagnosis. Results are based on a simplified screening model. Please consult a qualified healthcare professional for a proper evaluation.</p>
+      <button class="restart-btn" onclick="restartQuiz()">Start over</button>
+    </div>`;
+    }
+
+    function restartQuiz() {
+      state.step = 0; state.answers.fill(null);
+      state.age = ''; state.gender = null; state.jaundice = null; state.familyASD = null;
+      state.result = null;
+      render();
+    }
+
+    render();
+  </script>
+</body>
+
+</html>
